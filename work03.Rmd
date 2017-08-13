@@ -1,0 +1,137 @@
+---
+title: 'Case Study: Changes in Fine Particle Air Pollution in the U.S.'
+author: "Qinluoao"
+date: "2017/7/9"
+output:
+  pdf_document:
+    highlight: tango
+    includes:
+      in_header: header.tex
+    keep_tex: yes
+    latex_engine: xelatex
+  html_document:
+    highlight: haddock
+  word_document: default
+---
+##Loading and Processing the Raw Data
+1.从EPA获取数据，对数据初步查看（维度、行列情况、列标题）
+2.根据数据特点，数据行和标题行分别用read.table和read.lines读取
+3.将数据整理为规范的data.frame格式，提取关键字段Sample.Value并计算缺失值占比
+```{r}
+#Reading in the 1999 data
+wd<-getwd()
+setwd(wd)
+pm0 <- read.table("RD_501_88101_1999-0.txt", comment.char = "#", header = F, sep = "|",na.strings = "")
+dim(pm0)
+head(pm0)
+#读取首行，字符拆分，列名添加
+(cnames <- readLines("RD_501_88101_1999-0.txt",1))
+(cnames <- strsplit(cnames,"|",fixed = T))
+names(pm0) <- make.names(cnames[[1]])
+class(pm0)
+head(pm0[,1:13])
+#chose interesting column
+x0 <-pm0$Sample.Value
+summary(x0)
+#proportion of the observations are missing
+mean(is.na(x0))
+
+#Reading in the 2012 data
+pm1<-read.table("RD_501_88101_2012-0.txt", comment.char = "#", header = F, sep = "|",na.strings = "")
+names(pm1) <- make.names(cnames[[1]])
+x1 <- pm1$Sample.Value
+summary(x1)
+mean(is.na(x1))
+```
+##Results
+通过画出1999年和2012年监测网中检测值的箱线图来展示PM的整体变化
+采用log函数来调整数据中的倾斜
+###整体监测网分析
+```{r}
+boxplot(log2(x0), log2(x1))
+summary(x0)
+summary(x1)
+#negative values  
+negative <- x1<0
+mean(negative,na.rm = T)
+#负值与日期的关系探讨
+dates <- pm1$Date
+dates <- as.Date(as.character(dates), "%Y%m%d")
+head(dates)
+missing.months <- month.name[as.POSIXlt(dates)$mon + 1]
+tab <- table(factor(missing.months, levels = month.name))
+#对tab统计结果做变化，找出数据缺失月份
+round(100 * tab / sum(tab))
+```
+以上的统计表得出记录，负值主要出现在上半年的1-6月中，但并没有解释发生的原因。我们将从其他角度来探索。
+
+###单监测点对比分析
+
+2012年污染程度下降不排除是因为2012的在清洁区域的监测点比1999年时候多，为了排除此影响因素，我们选择一个在1999年和2012年均有数据的监测点来对比分析。
+```{r warning=FALSE}
+#定义一个1999年和2012年在纽约都有数据的监测点
+site0 <- unique(subset(pm0, State.Code == 36, c(County.Code, Site.ID)))
+head(site0)
+site1 <- unique(subset(pm1, State.Code == 36, c(County.Code, Site.ID)))
+#创建一个新变量site ID
+site0 <- paste(site0[,1], site0[,2], sep = "+")
+head(site0)
+site1 <- paste(site1[,1], site1[,2], sep = "+")
+str(site0)
+str(site1)
+#求交集intersection,得出在同一时段均有数据的监测点
+both <- intersect(site0, site1)
+print(both)
+#找出在每个观察点有多少个可用数据
+pm0$county.site <- with(pm0, paste(County.Code, Site.ID, sep = "+"))
+pm1$county.site <- with(pm1, paste(County.Code, Site.ID, sep = "+"))
+cnt0 <- subset(pm0, State.Code == 36 & county.site %in% both)
+cnt1 <- subset(pm1, State.Code == 36 & county.site %in% both)
+# 1999年数据
+sapply(split(cnt0, cnt0$county.site), nrow)
+# 2012年数据
+sapply(split(cnt1, cnt1$county.site), nrow)
+# 选择出county是63 and side ID是2008的数据
+both.county <- 63
+both.id <- 2008
+pm1sub <- subset(pm1, State.Code == 36 & County.Code == both.county & Site.ID == both.id)
+pm0sub <- subset(pm0, State.Code == 36 & County.Code == both.county & Site.ID == both.id)
+dates1 <- as.Date(as.character(pm1sub$Date), "%Y%m%d")
+x1sub <- pm1sub$Sample.Value
+dates0 <- as.Date(as.character(pm0sub$Date), "%Y%m%d")
+x0sub <- pm0sub$Sample.Value
+
+## Find global range
+rng <- range(x0sub, x1sub, na.rm = T)
+par(mfrow = c(1, 2), mar = c(4, 5, 2, 1))
+#T.T不太懂1
+plot(dates0, x0sub, pch = 20, ylim = rng, xlab = "", ylab = expression(PM[2.5] * " (" * mu * g/m^3 * ")"))
+abline(h = median(x0sub, na.rm = T))
+#T.T不太懂2
+plot(dates1, x1sub, pch = 20, ylim = rng, xlab = "", ylab = expression(PM[2.5] * " (" * mu * g/m^3 * ")"))
+abline(h = median(x1sub,na.rm =T))
+```
+
+###州范围对比分析
+```{r}
+#1999
+mn0 <- with(pm0, tapply(Sample.Value, State.Code, mean, na.rm = TRUE))
+#2012
+mn1 <- with(pm1, tapply(Sample.Value, State.Code, mean, na.rm = TRUE))
+## Make separate data frames for states / years
+d0 <- data.frame(state = names(mn0), mean = mn0)
+d1 <- data.frame(state = names(mn1), mean = mn1)
+mrg <- merge(d0, d1, by = "state")
+head(mrg)
+#作图展示得出结论：PM值到2012年总体有所下降
+par(mfrow = c(1, 1))
+rng <- range(mrg[,2], mrg[,3])
+with(mrg, plot(rep(1, 52), mrg[, 2], xlim = c(.5, 2.5), ylim = rng, xaxt = "n", xlab = "\
+", ylab = "State-wide Mean PM"))
+with(mrg, points(rep(2, 52), mrg[, 3]))
+segments(rep(1, 52), mrg[, 2], rep(2, 52), mrg[, 3])
+axis(1, c(1, 2), c("1999", "2012"))
+```
+
+##Sorry
+  这周末搬家时间很紧张，拖后腿了，还有不少细节还需要细化。比如处理缺失值、负值在什么百分比下才可以忽略，可视化作图等。
